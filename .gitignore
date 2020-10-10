@@ -11,3 +11,6 @@ client
 
 # IDE configuration
 .idea/
+
+# generated files
+bindata.go

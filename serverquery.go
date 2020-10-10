@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Syfaro/mc/mcquery"
+	"github.com/Syfaro/mcapi/types"
 	"github.com/gin-gonic/gin"
-	"github.com/syfaro/mc/mcquery"
-	"github.com/syfaro/mcapi/types"
 )
 
 func updateQuery(serverAddr string) *types.ServerQuery {
@@ -110,19 +110,22 @@ func getQueryFromCacheOrUpdate(serverAddr string, c *gin.Context) *types.ServerQ
 	serverAddr = strings.ToLower(serverAddr)
 
 	if status, ok := queryMap.GetOK(serverAddr); ok {
+		serverQueryCacheHit.Inc()
 		return status.(*types.ServerQuery)
 	}
+
+	serverQueryCacheMiss.Inc()
 
 	ip := c.GetHeader("CF-Connecting-IP")
 
 	log.Printf("New server %s from %s\n", serverAddr, ip)
 
 	if limit, count := shouldRateLimit(ip); limit {
-		c.AbortWithStatusJSON(http.StatusTooManyRequests, struct{
-			Error string `json:"error"`
-			TryAfter int `json:"try_after"`
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, struct {
+			Error    string `json:"error"`
+			TryAfter int    `json:"try_after"`
 		}{
-			Error: "too many invalid requests",
+			Error:    "too many invalid requests",
 			TryAfter: count / rateLimitThreshold,
 		})
 

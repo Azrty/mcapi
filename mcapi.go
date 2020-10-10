@@ -1,11 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
-	"io"
-	"io/ioutil"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -13,21 +11,26 @@ import (
 	"time"
 
 	"github.com/OneOfOne/cmap/stringcmap"
-	"github.com/gomodule/redigo/redis"
+	"github.com/Syfaro/mcapi/types"
 	"github.com/getsentry/raven-go"
 	"github.com/gin-contrib/sentry"
 	"github.com/gin-gonic/gin"
 	"github.com/gocraft/work"
-	"github.com/syfaro/mcapi/types"
+	"github.com/gomodule/redigo/redis"
+	"github.com/kelseyhightower/envconfig"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+//go:generate go-bindata -o bindata.go templates/ files/ scripts/
+
+// Config is configuration data to run.
 type Config struct {
-	HttpAppHost  string
-	RedisHost    string
-	StaticFiles  string
-	TemplateFile string
-	SentryDSN    string
-	AdminKey     string
+	HTTPAppHost string
+	RedisHost   string
+	SentryDSN   string
+	AdminKey    string
 }
 
 var redisPool *redis.Pool
@@ -37,40 +40,6 @@ var enqueuer *work.Enqueuer
 var pingMap *stringcmap.CMap
 var queryMap *stringcmap.CMap
 
-func loadConfig(path string) *Config {
-	file, err := ioutil.ReadFile(path)
-
-	if err != nil {
-		raven.CaptureErrorAndWait(err, nil)
-		panic(err)
-	}
-
-	var cfg Config
-	json.Unmarshal(file, &cfg)
-
-	return &cfg
-}
-
-func generateConfig(path string) {
-	cfg := &Config{
-		HttpAppHost:  ":8080",
-		RedisHost:    ":6379",
-		StaticFiles:  "./scripts",
-		TemplateFile: "./templates/index.html",
-		AdminKey:     "your_secret",
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "	")
-	if err != nil {
-		raven.CaptureErrorAndWait(err, nil)
-	}
-
-	err = ioutil.WriteFile(path, data, 0644)
-	if err != nil {
-		raven.CaptureErrorAndWait(err, nil)
-	}
-}
-
 var fatalServerErrors = []string{
 	"no such host",
 	"no route",
@@ -78,6 +47,33 @@ var fatalServerErrors = []string{
 	"too many colons in address",
 	"invalid argument",
 }
+
+var (
+	totalRequests = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mcapi_http_requests_total",
+		Help: "The total number of HTTP requests",
+	})
+
+	serverStatusCacheMiss = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mcapi_status_cache_miss_total",
+		Help: "The total number of cache misses for server status",
+	})
+
+	serverStatusCacheHit = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mcapi_status_cache_hit_total",
+		Help: "The total number of cache hits for server status",
+	})
+
+	serverQueryCacheMiss = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mcapi_query_cache_miss_total",
+		Help: "The total number of cache misses for server query",
+	})
+
+	serverQueryCacheHit = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mcapi_query_cache_hit_total",
+		Help: "The total number of cache hits for server query",
+	})
+)
 
 func updateServers() {
 	pingMap.ForEachLocked(func(key string, _ interface{}) bool {
@@ -93,6 +89,7 @@ func updateServers() {
 	})
 }
 
+// JobCtx is context for a running job.
 type JobCtx struct{}
 
 func jobMiddleware(job *work.Job, next work.NextMiddlewareFunc) error {
@@ -138,24 +135,17 @@ func jobUpdate(job *work.Job) error {
 }
 
 func main() {
-	configFile := flag.String("config", "config.json", "path to configuration file")
-	genConfig := flag.Bool("gencfg", false, "generate configuration file with sane defaults")
 	fetch := flag.Bool("fetch", true, "enable fetching server data")
 
 	flag.Parse()
 
-	f, _ := os.OpenFile("mcapi.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	defer f.Close()
+	log.SetOutput(os.Stdout)
 
-	log.SetOutput(io.MultiWriter(f, os.Stdout))
-
-	if *genConfig {
-		generateConfig(*configFile)
-		log.Println("Saved configuration file with sane defaults, please update as needed")
-		os.Exit(0)
+	var cfg Config
+	err := envconfig.Process("mcapi", &cfg)
+	if err != nil {
+		panic(err)
 	}
-
-	cfg := loadConfig(*configFile)
 
 	raven.SetDSN(cfg.SentryDSN)
 
@@ -199,8 +189,23 @@ func main() {
 	router := gin.New()
 	router.Use(sentry.Recovery(raven.DefaultClient, false))
 
-	router.Static("/scripts", cfg.StaticFiles)
-	router.LoadHTMLFiles(cfg.TemplateFile)
+	template, err := template.New("index.html").Parse(string(MustAsset("templates/index.html")))
+	if err != nil {
+		panic(err)
+	}
+	router.SetHTMLTemplate(template)
+
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	router.GET("/scripts/*filepath", func(c *gin.Context) {
+		p := c.Param("filepath")
+		data, err := Asset("scripts" + p)
+		if err != nil {
+			c.AbortWithStatus(404)
+			return
+		}
+		c.Writer.Write(data)
+	})
 
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -212,13 +217,15 @@ func main() {
 		r := redisPool.Get()
 		r.Do("INCR", "mcapi")
 		r.Close()
+
+		totalRequests.Inc()
 	})
 
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", gin.H{})
 	})
 
-	router.GET("/health", func (c *gin.Context) {
+	router.GET("/health", func(c *gin.Context) {
 		c.String(http.StatusOK, ":3")
 	})
 
@@ -303,5 +310,5 @@ func main() {
 		c.String(http.StatusOK, "Cleared items.")
 	})
 
-	router.Run(cfg.HttpAppHost)
+	router.Run(cfg.HTTPAppHost)
 }

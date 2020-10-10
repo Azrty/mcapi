@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	_ "image/png"
@@ -66,7 +67,8 @@ func respondServerImage(c *gin.Context) {
 	var imgToDraw image.Image
 
 	if status.Favicon == "" {
-		img, err := gg.LoadPNG("files/grass_sm.png")
+		r := bytes.NewReader(MustAsset("files/grass_sm.png"))
+		img, _, err := image.Decode(r)
 		if err != nil {
 			c.Error(err)
 			return

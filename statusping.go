@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Syfaro/mcapi/types"
+	"github.com/Syfaro/minepong"
 	"github.com/gin-gonic/gin"
-	"github.com/syfaro/mcapi/types"
-	"github.com/syfaro/minepong"
 )
 
 func updatePing(serverAddr string) *types.ServerStatus {
@@ -159,8 +159,11 @@ func getStatusFromCacheOrUpdate(serverAddr string, c *gin.Context, hideError boo
 	serverAddr = strings.ToLower(serverAddr)
 
 	if status, ok := pingMap.GetOK(serverAddr); ok {
+		serverStatusCacheHit.Inc()
 		return status.(*types.ServerStatus)
 	}
+
+	serverStatusCacheMiss.Inc()
 
 	ip := c.GetHeader("CF-Connecting-IP")
 

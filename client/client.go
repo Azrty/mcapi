@@ -8,11 +8,11 @@ import (
 	"io/ioutil"
 	"net/http"
 
-	"github.com/syfaro/mcapi/types"
+	"github.com/Syfaro/mcapi/types"
 )
 
 // APIEndpoint is the endpoint to use for requesting any information.
-const APIEndpoint = "https://mcapi.us"
+var APIEndpoint = "https://mcapi.us"
 
 // GetServerStatus allows you to ping a server and get basic information.
 func GetServerStatus(ip string, port int) (*types.ServerStatus, error) {
