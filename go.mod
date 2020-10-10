@@ -1,3 +1,4 @@
+// +heroku goVersion go1.12.17
 module github.com/Syfaro/mcapi
 
 require (
