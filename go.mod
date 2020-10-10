@@ -1,5 +1,5 @@
 // +heroku goVersion go1.13.9
-// +heroku install ./cmd/...
+// +heroku install github.com/go-bindata/go-bindata/...
 module github.com/Syfaro/mcapi
 
 require (
