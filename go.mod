@@ -2,7 +2,7 @@
 module github.com/Syfaro/mcapi
 
 require (
-	github.com/go-bindata/go-bindata v3.1.3
+	github.com/go-bindata/go-bindata
 	github.com/OneOfOne/cmap v0.0.0-20170825200327-ccaef7657ab8
 	github.com/Syfaro/mc v0.0.0-20171114091321-a4fb71b7e0bb
 	github.com/Syfaro/minepong v0.0.0-20191216084513-a3153401344e
