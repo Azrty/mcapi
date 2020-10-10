@@ -1,4 +1,5 @@
 // +heroku goVersion go1.13.9
+// +heroku install ./cmd/...
 module github.com/Syfaro/mcapi
 
 require (
